@@ -1,0 +1,1 @@
+# KomunikatorIRC_SK2
