@@ -25,6 +25,17 @@ struct thread_data_t
 	int id;
 	int cons[100];
 };
+int send(char* topic, char* post){
+	file = fopen(topic ,"r");
+	if (file == NULL)
+	{
+		perror("Blad przy otwieraniu users.txt");
+	}
+	
+}
+int restore_session(char*username){
+	
+}
 //TODO
 int unsubscribe(char* username, char* topic){
 	FILE * file;
