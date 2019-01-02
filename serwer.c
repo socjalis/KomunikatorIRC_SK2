@@ -13,6 +13,7 @@
 #include <pthread.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <dirent.h> 
 
 #define SERVER_PORT 1234
 #define QUEUE_SIZE 5
@@ -25,33 +26,77 @@ struct thread_data_t
 	int id;
 	int cons[100];
 };
-int send(char* topic, char* post){
-	file = fopen(topic ,"r");
+
+int sendpost(char* topic, char* post){
+	char pathname[40] = "./topics/";
+	strcat(pathname, topic);
+
+	FILE* file;
+	file = fopen(pathname ,"r");
 	if (file == NULL)
 	{
-		perror("Blad przy otwieraniu users.txt");
+		perror("Blad przy otwieraniu listy subskrypcyjnej");
 	}
-	
+	return 0;
 }
-int restore_session(char*username){
-	
+int restore_session(char* username, int id){
+	DIR *d;
+	struct dirent *dir;
+	d = opendir("./topics");
+	if(d){
+		char word[20] = "";
+		FILE* file;
+		char pathname[40] = "./sessions/";
+		char str[12];
+		sprintf(str, "%d", id);
+		strcat(pathname, str);
+		open (pathname, O_WRONLY | O_CREAT, 0777);
+		file = fopen(pathname, "w");
+
+		char pathname2[40] = "./topics/";
+
+    	while ((dir = readdir(d)) != NULL) {
+			if(strcmp(dir->d_name, ".") != 0 && strcmp(dir->d_name, "..") != 0)
+			{
+				printf("%s\n", dir->d_name);
+				FILE* file2;
+				strcat(pathname2, dir->d_name);
+				file2 = fopen(pathname2, "r");
+    			while(fscanf(file2, "%s", word) != EOF)
+    			{
+    				if(strcmp(word, username) == 0)
+    				{
+						fprintf(file, "%s\n", dir->d_name);
+						fflush(file);
+						break;
+    				}
+    			}
+				fclose(file2);
+			}
+    	}
+		fclose(file);
+    	closedir(d);
+  	}
+	return 0;
 }
 //TODO
 int unsubscribe(char* username, char* topic){
+	char pathname[40] = "./topics/";
+	strcat(pathname, topic);
+
 	FILE * file;
-    file = fopen(topic ,"r");
+    file = fopen(pathname ,"r");
 	if (file == NULL)
     {
         puts("Nowa kategoria, dodaje plik z subskrybentami");
-		open (topic, O_WRONLY | O_CREAT, 0777);
-		file = fopen(topic, "w");
+		open (pathname, O_WRONLY | O_CREAT, 0777);
+		file = fopen(pathname, "w");
 	    if (file == NULL)
 		{
 			perror("Blad przy otwieraniu users.txt");
 		}
     }
     else{
-		int found = 0;
 		char word[20] = "";
 		while(fscanf(file, "%s", word) != EOF)
 		{	
@@ -69,26 +114,29 @@ int unsubscribe(char* username, char* topic){
 }
 
 int subscribe(char* username, char* topic){
+	char pathname[40] = "./topics/";
+	strcat(pathname, topic);
+
 	FILE * file;
-    file = fopen(topic ,"r");
+    file = fopen(pathname ,"r");
 	if (file == NULL)
     {
         puts("Nowa kategoria, dodaje plik z subskrybentami");
-		open (topic, O_WRONLY | O_CREAT, 0777);
-		file = fopen(topic, "w");
+		open (pathname, O_WRONLY | O_CREAT, 0777);
+		file = fopen(pathname, "w");
 	    if (file == NULL)
 		{
-			perror("Blad przy otwieraniu users.txt");
+			perror("Blad przy otwieraniu ");
 		}
     }
     else{
-		int found = 0;
 		char word[20] = "";
 		while(fscanf(file, "%s", word) != EOF)
 		{	
 			if(strcmp(word, username) == 0)
 			{
 				//już było
+				fclose(file);
 				return 0;
 			}
 		}
@@ -96,11 +144,11 @@ int subscribe(char* username, char* topic){
 
 	fprintf(file, "%s\n", username);
 	fflush(file);
+	fclose(file);
 	return 1;
 }
 
-int login(char username[10])
-{    
+int login(char username[10]){  
     FILE * file;
     file = fopen ("users.txt","r");
     if (file == NULL)
@@ -150,8 +198,7 @@ int readn(int socket, int size, char* buf){
 	return i;
 }
 //funkcja opisującą zachowanie wątku - musi przyjmować argument typu (void *) i zwracać (void *)
-void *ThreadBehavior(void *t_data)
-{
+void *ThreadBehavior(void *t_data){
     struct thread_data_t *th_data = (struct thread_data_t*)t_data;
     //dostęp do pól struktury: (*th_data).pole
     char buf[10] = "";
@@ -165,6 +212,8 @@ void *ThreadBehavior(void *t_data)
 	//wczytanie loginu
     readn(th_data->fd_socket, 10, buf);
     
+	//rozpoczecie sesji
+	restore_session(buf, th_data->id);
 
 	//login
     int check_login = login(buf);
@@ -194,7 +243,7 @@ void *ThreadBehavior(void *t_data)
 			unsubscribe(buf, topic);
 		}
 		else if(client_msg[0] == '3'){
-			puts("Dodanie wiadomości\n");
+			puts("Wysyłanie wiadomości\n");
 			char topic[49]="";
 			memcpy(topic, &client_msg[1], 49);
 			puts(topic);
@@ -241,11 +290,14 @@ int main(int argc, char* argv[])
     int listen_result;
     char reuse_addr_val = 1;
     struct sockaddr_in server_address;
-    pthread_mutex_t m1 = PTHREAD_MUTEX_INITIALIZER;
+    //pthread_mutex_t m1 = PTHREAD_MUTEX_INITIALIZER;
 	int connections [100];
 	int id = 0;
-	
-    //inicjalizacja gniazda serwera
+
+	//czyszczenie sesji
+	system("exec rm -r /sessions/*");
+    
+	//inicjalizacja gniazda serwera
 
     memset(&server_address, 0, sizeof(struct sockaddr));
     server_address.sin_family = AF_INET;
