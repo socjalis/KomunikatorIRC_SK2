@@ -24,19 +24,40 @@ struct thread_data_t
 //TODO
     int fd_socket;
 	int id;
-	int cons[100];
+	int* cons;
 };
 
-int sendpost(char* topic, char* post){
-	char pathname[40] = "./topics/";
-	strcat(pathname, topic);
+int sendpost(char* topic, char* post, int* cons){
+	DIR *d;
+	struct dirent *dir;
+	d = opendir("./sessions");
+	if(d){
+		char word[20] = "";
+		FILE* file;
+		char pathname[40] = "./sessions/";
 
-	FILE* file;
-	file = fopen(pathname ,"r");
-	if (file == NULL)
-	{
-		perror("Blad przy otwieraniu listy subskrypcyjnej");
-	}
+    	while ((dir = readdir(d)) != NULL) {
+			if(strcmp(dir->d_name, ".") != 0 && strcmp(dir->d_name, "..") != 0)
+			{
+				printf("%s\n", dir->d_name);
+				strcat(pathname, dir->d_name);
+				file = fopen(pathname, "r");
+    			while(fscanf(file, "%s", word) != EOF)
+    			{
+    				if(strcmp(word, topic) == 0)
+    				{
+						int id;
+						sscanf(dir->d_name, "%d", &id);
+						write(cons[id], post, 950);
+						break;
+    				}
+    			}
+				fclose(file);
+			}
+    	}
+		fclose(file);
+    	closedir(d);
+  	}
 	return 0;
 }
 int restore_session(char* username, int id){
@@ -232,6 +253,7 @@ void *ThreadBehavior(void *t_data){
 			puts("Dodanie subskrypcji\n");
 			char topic[1000]="";
 			strcpy(topic, &client_msg[1]);
+			puts("Temat:\n");
 			puts(topic);
 			subscribe(buf, topic);
 		}
@@ -246,10 +268,15 @@ void *ThreadBehavior(void *t_data){
 			puts("Wysyłanie wiadomości\n");
 			char topic[49]="";
 			memcpy(topic, &client_msg[1], 49);
+			puts("Temat:\n");
 			puts(topic);
+			
 			char post[950]="";
 			strcpy(post, &client_msg[50]);
-			//send(topic, post);
+			puts("Temat:\n");
+			puts(post);
+
+			sendpost(topic, post, th_data->cons);
 		}
 	}
     free(th_data);
@@ -271,7 +298,7 @@ void handleConnection(int connection_socket_descriptor, int id, int* cons) {
     struct thread_data_t *t_data = (struct thread_data_t*) malloc(sizeof(struct thread_data_t));
     t_data->fd_socket = connection_socket_descriptor;
 	t_data->id = id;
-	memcpy(t_data->cons, cons, sizeof t_data->cons);
+	t_data->cons = cons;
     
     create_result = pthread_create(&thread1, NULL, ThreadBehavior, (void *)t_data);
     if (create_result){
@@ -295,7 +322,7 @@ int main(int argc, char* argv[])
 	int id = 0;
 
 	//czyszczenie sesji
-	system("exec rm -r /sessions/*");
+	system("exec rm -r -f /sessions/*");
     
 	//inicjalizacja gniazda serwera
 
