@@ -26,7 +26,29 @@ struct thread_data_t
 	int id;
 	int* cons;
 };
+int parse_msg(char* msg, char* type, char* topic, char* post){
+	int size = strlen(msg);
+	int i = 0;
+	int delimiters = 0;
+	int currentchar = 0;
+	type[0] = msg[0];
 
+	for(i = 2; i < size; i++){
+		if(msg[i] != '#'){
+			if(delimiters == 0) topic[currentchar] = msg[i];
+			else if(delimiters == 1) post[currentchar] = msg[i];
+			currentchar++;
+		}
+		else{
+			delimiters++;
+			currentchar = 0;
+			if(delimiters > 2) return 1;
+		}
+	}
+	puts(type);
+	puts(topic);
+	return 0;
+}
 int sendpost(char* topic, char* post, int* cons){
 	DIR *d;
 	struct dirent *dir;
@@ -64,8 +86,9 @@ int restore_session(char* username, int id){
 	DIR *d;
 	struct dirent *dir;
 	d = opendir("./topics");
+	//jeśli otworzylismy folder...
 	if(d){
-		char word[20] = "";
+		char word[100] = "";
 		FILE* file;
 		char pathname[40] = "./sessions/";
 		char str[12];
@@ -74,19 +97,26 @@ int restore_session(char* username, int id){
 		open (pathname, O_WRONLY | O_CREAT, 0777);
 		file = fopen(pathname, "w");
 
-		char pathname2[40] = "./topics/";
-
+		
+		//sprawdzamy wszystkie tematy, w poszukiwaniu wskazanego uzytkownika
     	while ((dir = readdir(d)) != NULL) {
 			if(strcmp(dir->d_name, ".") != 0 && strcmp(dir->d_name, "..") != 0)
 			{
+				char pathname2[40] = "./topics/";
 				printf("%s\n", dir->d_name);
+				fflush(file);
 				FILE* file2;
 				strcat(pathname2, dir->d_name);
 				file2 = fopen(pathname2, "r");
+				if (file2 == NULL){
+					perror("Błąd przy otwieraniu pliku w funkcji restore_session");
+				}
     			while(fscanf(file2, "%s", word) != EOF)
     			{
+					//jesli znalezlismy uzytkownika zapisanego do danego tematu, dodajemy do jego sesji ten
     				if(strcmp(word, username) == 0)
     				{
+						
 						fprintf(file, "%s\n", dir->d_name);
 						fflush(file);
 						break;
@@ -212,7 +242,19 @@ int readn(int socket, int size, char* buf){
 	int i = 0;
 	char c;
 	while(read(socket, &c, 1) > 0){
-		if(c == '\n' || i == 10) break;
+		if(c == '\n' || i == size) break;
+		buf[i] = c;
+		i++;
+	}
+	return i;
+}
+
+int read_to_delimiter(int socket, int size, char* buf){
+	int i = 0;
+	char c;
+	while(read(socket, &c, 1) > 0){
+		//puts(&c);
+		if(c == '\n' || i == size) break;
 		buf[i] = c;
 		i++;
 	}
@@ -233,9 +275,10 @@ void *ThreadBehavior(void *t_data){
 	//wczytanie loginu
     readn(th_data->fd_socket, 10, buf);
     
-	//rozpoczecie sesji
+	puts("Wznowienie sesji\n");
+	//wnowienie sesji
 	restore_session(buf, th_data->id);
-
+	puts("Logowanie\n");
 	//login
     int check_login = login(buf);
 	if(check_login == 0){
@@ -246,38 +289,36 @@ void *ThreadBehavior(void *t_data){
 		msg = "Zalogowano\n";
 		write(th_data->fd_socket, msg, strlen(msg));
 	}
-	
+
+	//glówna pętla
 	while(1==1){
-		readn(th_data->fd_socket, 1000, client_msg);
-		if(client_msg[0] == '1'){
-			puts("Dodanie subskrypcji\n");
-			char topic[1000]="";
-			strcpy(topic, &client_msg[1]);
-			puts("Temat:\n");
+		read_to_delimiter(th_data->fd_socket, 1000, client_msg);
+		char type [0]= "";
+		char topic[100] = "";
+		char post [899] = "";
+		parse_msg(client_msg, type, topic, post);
+		if(type[0] == '1'){
+			puts("Dodanie subskrypcji");
+			puts("Temat:");
 			puts(topic);
 			subscribe(buf, topic);
 		}
-		else if(client_msg[0] == '2'){
-			puts("Usunięcie subskrypcji\n");
-			char topic[49]="";
-			memcpy(topic, &client_msg[1], 49);
+		else if(type[0] == '2'){
+			puts("Usunięcie subskrypcji");
 			puts(topic);
 			unsubscribe(buf, topic);
 		}
-		else if(client_msg[0] == '3'){
-			puts("Wysyłanie wiadomości\n");
-			char topic[49]="";
-			memcpy(topic, &client_msg[1], 49);
-			puts("Temat:\n");
+		else if(type[0] == '3'){
+			puts("Wysyłanie wiadomości");
+			puts("Temat:");
 			puts(topic);
 			
-			char post[950]="";
-			strcpy(post, &client_msg[50]);
-			puts("Temat:\n");
+			puts("Post:");
 			puts(post);
-
 			sendpost(topic, post, th_data->cons);
 		}
+		
+		strcpy(client_msg, "");
 	}
     free(th_data);
 
