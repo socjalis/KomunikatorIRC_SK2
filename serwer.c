@@ -21,17 +21,19 @@
 //struktura zawierająca dane, które zostaną przekazane do wątku
 struct thread_data_t
 {
-//TODO
     int fd_socket;
 	int id;
 	int* cons;
 };
-int parse_msg(char* msg, char* type, char* topic, char* post){
+int parse_msg(char* msg, char* type, char* topic, char* post, char* buf){
 	int size = strlen(msg);
 	int i = 0;
 	int delimiters = 0;
 	int currentchar = 0;
-	type[0] = msg[0];
+	msg[1]='\0';
+	strcpy(type, &msg[0]);
+
+	type[1] = '\0';
 
 	for(i = 2; i < size; i++){
 		if(msg[i] != '#'){
@@ -45,8 +47,6 @@ int parse_msg(char* msg, char* type, char* topic, char* post){
 			if(delimiters > 2) return 1;
 		}
 	}
-	puts(type);
-	puts(topic);
 	return 0;
 }
 int sendpost(char* topic, char* post, int* cons){
@@ -56,21 +56,25 @@ int sendpost(char* topic, char* post, int* cons){
 	if(d){
 		char word[20] = "";
 		FILE* file;
-		char pathname[40] = "./sessions/";
-
+		//przegladam sesje uzytkownikow
     	while ((dir = readdir(d)) != NULL) {
 			if(strcmp(dir->d_name, ".") != 0 && strcmp(dir->d_name, "..") != 0)
 			{
-				printf("%s\n", dir->d_name);
+				char pathname[40] = "./sessions/";
 				strcat(pathname, dir->d_name);
 				file = fopen(pathname, "r");
+				//wyszukuje w sesji uzytkownika tematu
     			while(fscanf(file, "%s", word) != EOF)
     			{
     				if(strcmp(word, topic) == 0)
     				{
 						int id;
 						sscanf(dir->d_name, "%d", &id);
-						write(cons[id], post, 950);
+						printf("id: %d\n", id);
+						fflush(stdout);
+						write(cons[id], post, strlen(post));
+						printf("con: %d\n", cons[id]);
+						fflush(stdout);
 						break;
     				}
     			}
@@ -103,8 +107,8 @@ int restore_session(char* username, int id){
 			if(strcmp(dir->d_name, ".") != 0 && strcmp(dir->d_name, "..") != 0)
 			{
 				char pathname2[40] = "./topics/";
-				printf("%s\n", dir->d_name);
-				fflush(file);
+				//printf("%s\n", dir->d_name);
+				//fflush(file);
 				FILE* file2;
 				strcat(pathname2, dir->d_name);
 				file2 = fopen(pathname2, "r");
@@ -164,7 +168,7 @@ int unsubscribe(char* username, char* topic){
 	return 1;
 }
 
-int subscribe(char* username, char* topic){
+int subscribe(char* username, char* topic, int id){
 	char pathname[40] = "./topics/";
 	strcat(pathname, topic);
 
@@ -174,28 +178,32 @@ int subscribe(char* username, char* topic){
     {
         puts("Nowa kategoria, dodaje plik z subskrybentami");
 		open (pathname, O_WRONLY | O_CREAT, 0777);
-		file = fopen(pathname, "w");
-	    if (file == NULL)
-		{
-			perror("Blad przy otwieraniu ");
-		}
+
     }
     else{
+		puts("Istniejąca kategoria, dodaję subskrybcję");
 		char word[20] = "";
 		while(fscanf(file, "%s", word) != EOF)
 		{	
 			if(strcmp(word, username) == 0)
 			{
 				//już było
+				puts("Subskrypcja była już dodana!");
 				fclose(file);
 				return 0;
 			}
 		}
 	}
-
+	
+	file = fopen(pathname, "a");
+    if (file == NULL)
+	{
+		perror("Blad przy otwieraniu ");
+	}
 	fprintf(file, "%s\n", username);
 	fflush(file);
 	fclose(file);
+	restore_session(username, id);
 	return 1;
 }
 
@@ -216,12 +224,10 @@ int login(char username[10]){
     	}
     }
     if(found == 1){
-        printf("Found\n");
         fclose(file);
         return 1;
     }
     else{
-        printf("Not found\n");
         fclose(file);
         file = fopen ("users.txt","a");
         if (file == NULL)
@@ -229,9 +235,7 @@ int login(char username[10]){
             perror("Blad przy otwieraniu users.txt");
         }
         fprintf(file, "%s\n", username);
-        printf("%s", username);
         fflush(file);
-        fflush(stdout);
         
         return 0;
     }
@@ -253,7 +257,6 @@ int read_to_delimiter(int socket, int size, char* buf){
 	int i = 0;
 	char c;
 	while(read(socket, &c, 1) > 0){
-		//puts(&c);
 		if(c == '\n' || i == size) break;
 		buf[i] = c;
 		i++;
@@ -263,8 +266,7 @@ int read_to_delimiter(int socket, int size, char* buf){
 //funkcja opisującą zachowanie wątku - musi przyjmować argument typu (void *) i zwracać (void *)
 void *ThreadBehavior(void *t_data){
     struct thread_data_t *th_data = (struct thread_data_t*)t_data;
-    //dostęp do pól struktury: (*th_data).pole
-    char buf[10] = "";
+    char buf[20] = "";
 	
 	char *msg;
 	char client_msg[1000];
@@ -273,12 +275,8 @@ void *ThreadBehavior(void *t_data){
 	write(th_data->fd_socket, msg, strlen(msg));
 
 	//wczytanie loginu
-    readn(th_data->fd_socket, 10, buf);
+    read_to_delimiter(th_data->fd_socket, 20, buf);
     
-	puts("Wznowienie sesji\n");
-	//wnowienie sesji
-	restore_session(buf, th_data->id);
-	puts("Logowanie\n");
 	//login
     int check_login = login(buf);
 	if(check_login == 0){
@@ -288,20 +286,23 @@ void *ThreadBehavior(void *t_data){
 	else{
 		msg = "Zalogowano\n";
 		write(th_data->fd_socket, msg, strlen(msg));
+		//wnowienie sesji
+		puts("Wznowienie sesji\n");
+		restore_session(buf, th_data->id);
 	}
 
 	//glówna pętla
 	while(1==1){
 		read_to_delimiter(th_data->fd_socket, 1000, client_msg);
-		char type [0]= "";
+		char type [2] = "";
 		char topic[100] = "";
-		char post [899] = "";
-		parse_msg(client_msg, type, topic, post);
+		char post [898] = "";
+		parse_msg(client_msg, type, topic, post, buf);
 		if(type[0] == '1'){
 			puts("Dodanie subskrypcji");
 			puts("Temat:");
 			puts(topic);
-			subscribe(buf, topic);
+			subscribe(buf, topic, th_data->id);
 		}
 		else if(type[0] == '2'){
 			puts("Usunięcie subskrypcji");
@@ -317,7 +318,9 @@ void *ThreadBehavior(void *t_data){
 			puts(post);
 			sendpost(topic, post, th_data->cons);
 		}
-		
+		else if(type[0] == '9'){
+			brake;
+		}
 		strcpy(client_msg, "");
 	}
     free(th_data);
@@ -363,7 +366,7 @@ int main(int argc, char* argv[])
 	int id = 0;
 
 	//czyszczenie sesji
-	system("exec rm -r -f /sessions/*");
+	system("exec rm -r -f ./sessions/*");
     
 	//inicjalizacja gniazda serwera
 
@@ -397,7 +400,7 @@ int main(int argc, char* argv[])
         {
             fprintf(stderr, "%s: Błąd przy próbie utworzenia gniazda dla połączenia.\n", argv[0]);
             exit(1);
-        }   
+        }
         handleConnection(connection_socket_descriptor, id, connections);
 		connections[id] = connection_socket_descriptor;
 		id++;
